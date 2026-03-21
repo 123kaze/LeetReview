@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "LeetReview - 艾宾浩斯复习助手",
+  "version": "1.0.0",
+  "description": "基于艾宾浩斯遗忘曲线，自动追踪 LeetCode 刷题记录并科学安排复习计划，接入 DeepSeek 大模型提供智能提示。",
+  "permissions": [
+    "storage",
+    "alarms",
+    "activeTab",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://leetcode.cn/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://leetcode.cn/problems/*",
+        "https://leetcode.cn/problemset/*",
+        "https://leetcode.cn/"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "dist/popup.html"
+  }
+}
