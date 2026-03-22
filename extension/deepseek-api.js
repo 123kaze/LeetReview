@@ -90,3 +90,27 @@ ${levelDesc[hintLevel] || levelDesc[1]}
     { role: 'user', content: prompt }
   ], { temperature: 0.6, maxTokens: 512 });
 }
+
+/**
+ * 诊断代码（复杂度分析与优化建议）
+ */
+export async function diagnoseCode(apiKey, problem, code) {
+  const prompt = `题目：${problem.id}. ${problem.title} (难度：${problem.difficulty})
+用户提交的代码如下：
+
+\`\`\`
+${code}
+\`\`\`
+
+请像一位严谨的资深工程师一样进行Code Review：
+1. 分析这段代码的【时间复杂度】和【空间复杂度】。
+2. 指出代码中存在的冗余、低效或不优雅的部分。
+3. 给出优化后的更优或更简洁的写法示例。
+
+注意：直接输出分析和建议，要求言简意赅，不要过多寒暄。`;
+
+  return chatWithDeepSeek(apiKey, [
+    { role: 'system', content: '你是一位资深的算法架构师，擅长代码质量评估和时间空间复杂度优化。' },
+    { role: 'user', content: prompt }
+  ], { temperature: 0.3, maxTokens: 800 });
+}

@@ -80,13 +80,15 @@ export function updateReviewEntry(entry, mastery = 'normal') {
  * @param {Object} reviewData - 所有复习记录  { [id]: entry }
  * @returns {Array} 今日复习列表
  */
-export function getTodayReviewList(reviewData) {
+export function getTodayReviewList(reviewData, limit = null) {
   const now = Date.now();
+  // 计算今天结束的时间戳（今晚 23:59:59）
+  const todayEnd = new Date().setHours(23, 59, 59, 999);
   const today = [];
 
   for (const [id, entry] of Object.entries(reviewData)) {
     if (entry.retired) continue;
-    if (entry.nextReview <= now) {
+    if (entry.nextReview <= todayEnd) {
       today.push(entry);
     }
   }
@@ -100,7 +102,7 @@ export function getTodayReviewList(reviewData) {
     return a.nextReview - b.nextReview;
   });
 
-  return today;
+  return limit ? today.slice(0, limit) : today;
 }
 
 /**
@@ -110,12 +112,14 @@ export function getTodayReviewList(reviewData) {
  */
 export function getReviewStats(reviewData) {
   const now = Date.now();
+  // 使用今日结束的时间戳，与 getTodayReviewList 逻辑保持一致
+  const todayEnd = new Date().setHours(23, 59, 59, 999);
   let total = 0, dueToday = 0, retired = 0, mastered = 0;
 
   for (const entry of Object.values(reviewData)) {
     total++;
     if (entry.retired) { retired++; continue; }
-    if (entry.nextReview <= now) dueToday++;
+    if (entry.nextReview <= todayEnd) dueToday++;
     if (entry.reviewCount >= 3 && entry.mastery === 'easy') mastered++;
   }
 

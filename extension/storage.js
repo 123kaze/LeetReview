@@ -7,7 +7,8 @@ const STORAGE_KEYS = {
   REVIEW_DATA: 'leetreview_reviewData',
   SETTINGS: 'leetreview_settings',
   SYNC_LOG: 'leetreview_syncLog',
-  DAILY_CACHE: 'leetreview_dailyCache'
+  DAILY_CACHE: 'leetreview_dailyCache',
+  ACTIVITY_LOG: 'leetreview_activityLog'
 };
 
 /**
@@ -83,6 +84,24 @@ export async function updateSyncLog(count) {
     lastSync: Date.now(),
     count
   });
+}
+
+/**
+ * 获取活动日志 (热力图)
+ */
+export async function getActivityLog() {
+  return (await storageGet(STORAGE_KEYS.ACTIVITY_LOG)) || {};
+}
+
+/**
+ * 更新活动日志
+ */
+export async function updateActivityLog(count = 1) {
+  const log = await getActivityLog();
+  const dateStr = new Date().toISOString().split('T')[0];
+  log[dateStr] = (log[dateStr] || 0) + count;
+  await storageSet(STORAGE_KEYS.ACTIVITY_LOG, log);
+  return log;
 }
 
 export { STORAGE_KEYS };

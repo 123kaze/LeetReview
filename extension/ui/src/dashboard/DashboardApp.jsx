@@ -19,7 +19,15 @@ export default function DashboardApp() {
   const [generatingSummary, setGeneratingSummary] = useState(false);
   
   const [showSettings, setShowSettings] = useState(false);
-  const [settings, setSettings] = useState({ deepseekApiKey: '', dailyNewCount: 3 });
+  const [settings, setSettings] = useState({ deepseekApiKey: '', dailyNewCount: 3, maxDailyReview: 20 });
+
+  // Heatmap & Diagnosis States
+  const [activityLog, setActivityLog] = useState({});
+  const [showDiagnose, setShowDiagnose] = useState(false);
+  const [diagnoseProblem, setDiagnoseProblem] = useState(null);
+  const [diagnoseCode, setDiagnoseCode] = useState('');
+  const [diagnoseResult, setDiagnoseResult] = useState('');
+  const [diagnosing, setDiagnosing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -36,6 +44,8 @@ export default function DashboardApp() {
       }
       const rec = await sendMessage({ type: 'GET_RECOMMENDED' });
       if (rec) setTodayNew(rec.recommended || []);
+      const log = await sendMessage({ type: 'GET_ACTIVITY_LOG' });
+      if (log) setActivityLog(log);
     } catch (err) {
       console.error(err);
     }
@@ -96,6 +106,120 @@ export default function DashboardApp() {
     }
   }
 
+  function openDiagnose(item) {
+    setDiagnoseProblem(item);
+    setDiagnoseCode('');
+    setDiagnoseResult('');
+    setShowDiagnose(true);
+  }
+
+  async function submitDiagnosis() {
+    if (!settings.deepseekApiKey) {
+      alert("请先配置 DeepSeek API Key");
+      setShowDiagnose(false);
+      setShowSettings(true);
+      return;
+    }
+    if (!diagnoseCode.trim()) {
+      alert("请输入要诊断的代码");
+      return;
+    }
+    setDiagnosing(true);
+    setDiagnoseResult('');
+    const res = await sendMessage({ type: 'DIAGNOSE_CODE', problem: diagnoseProblem, code: diagnoseCode });
+    if (res?.diagnosis) {
+      setDiagnoseResult(res.diagnosis);
+    } else {
+      setDiagnoseResult('诊断失败: ' + (res?.error || 'Unknown Error'));
+    }
+    setDiagnosing(false);
+  }
+
+  function renderHeatmap() {
+    const today = new Date();
+    const days = [];
+    for(let i = 83; i >= 0; i--) { // 12 weeks
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const ds = `${yyyy}-${mm}-${dd}`;
+      days.push({ date: ds, count: activityLog[ds] || 0 });
+    }
+
+    // Group by weeks (columns) for a GitHub-style layout: 7 rows x 12 cols
+    const weeks = [];
+    for (let i = 0; i < days.length; i += 7) {
+      weeks.push(days.slice(i, i + 7));
+    }
+
+    return (
+      <div style={{ marginTop: 24 }}>
+        <h4 style={{ fontSize: 13, marginBottom: 8, color: 'var(--text-secondary)', textShadow: '1px 1px 0 #000' }}>⛏️ 活跃热力图 (最近12周)</h4>
+        {activityLog.debugError && (
+          <div style={{ fontSize: 11, color: '#ff5555', marginBottom: 8, background: 'rgba(255,0,0,0.1)', padding: 4, border: '1px solid #ff5555' }}>
+            API Debug: {activityLog.debugError}
+          </div>
+        )}
+        {activityLog.debugInfo && (
+          <div style={{ fontSize: 11, color: '#55ff55', marginBottom: 8, background: 'rgba(0,255,0,0.1)', padding: 4, border: '1px solid #55ff55' }}>
+            {activityLog.debugInfo}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 3 }}>
+          {weeks.map((week, wi) => (
+            <div key={wi} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {week.map(day => {
+                let texture = 'url(/mc/stone.png)';
+                let border = '2px solid #555';
+                let shadow = 'inset -1px -1px rgba(0,0,0,0.5)';
+                if (day.count >= 1 && day.count <= 2) {
+                  texture = 'url(/mc/grass_block_top.png)';
+                  border = '2px solid #2d6e12';
+                  shadow = 'inset -2px -2px rgba(0,0,0,0.3), inset 2px 2px rgba(255,255,255,0.3)';
+                } else if (day.count >= 3 && day.count <= 5) {
+                  texture = 'url(/mc/gold_block.png)';
+                  border = '2px solid #DDA520';
+                  shadow = 'inset -2px -2px rgba(0,0,0,0.3), inset 2px 2px rgba(255,215,0,0.4)';
+                } else if (day.count >= 6 && day.count <= 9) {
+                  texture = 'url(/mc/emerald_block.png)';
+                  border = '2px solid #00cc55';
+                  shadow = 'inset -2px -2px rgba(0,0,0,0.3), inset 2px 2px rgba(100,255,100,0.5)';
+                } else if (day.count >= 10) {
+                  texture = 'url(/mc/diamond_block.png)';
+                  border = '2px solid #00ccff';
+                  shadow = 'inset -2px -2px rgba(0,0,0,0.3), inset 2px 2px rgba(100,200,255,0.6)';
+                }
+                return (
+                  <div 
+                    key={day.date} 
+                    title={`${day.date}: 提交 ${day.count} 次`}
+                    style={{ 
+                      width: 18, height: 18,
+                      backgroundImage: texture,
+                      backgroundSize: 'cover',
+                      imageRendering: 'pixelated',
+                      border,
+                      boxShadow: shadow,
+                    }} 
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 8, fontSize: 11, color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 12, height: 12, display: 'inline-block', backgroundImage: 'url(/mc/stone.png)', backgroundSize: 'cover', imageRendering: 'pixelated', border: '1px solid #555' }} /> 0</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 12, height: 12, display: 'inline-block', backgroundImage: 'url(/mc/grass_block_top.png)', backgroundSize: 'cover', imageRendering: 'pixelated', border: '1px solid #2d6e12' }} /> 1-2</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 12, height: 12, display: 'inline-block', backgroundImage: 'url(/mc/gold_block.png)', backgroundSize: 'cover', imageRendering: 'pixelated', border: '1px solid #DDA520' }} /> 3-5</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 12, height: 12, display: 'inline-block', backgroundImage: 'url(/mc/emerald_block.png)', backgroundSize: 'cover', imageRendering: 'pixelated', border: '1px solid #00cc55' }} /> 6-9</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><span style={{ width: 12, height: 12, display: 'inline-block', backgroundImage: 'url(/mc/diamond_block.png)', backgroundSize: 'cover', imageRendering: 'pixelated', border: '1px solid #00ccff' }} /> 10+</span>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="dashboard-container" style={{ alignItems: 'center', justifyContent: 'center' }}>
@@ -127,7 +251,7 @@ export default function DashboardApp() {
           
           <h2 className="section-title">
             ⏰ 今日待复习
-            <span className="count">{todayReview.length}</span>
+            <span className="count">{todayReview.length} / 共 {stats?.dueToday || 0}</span>
           </h2>
 
           <div className="task-list">
@@ -165,6 +289,9 @@ export default function DashboardApp() {
                     </div>
                   </div>
                   <div className="task-actions">
+                    <button className="btn btn-secondary btn-sm" style={{ background: 'var(--mc-cobble)' }} onClick={() => openDiagnose(item)}>
+                      💻 诊断
+                    </button>
                     <button className="btn btn-secondary btn-sm" onClick={() => handleAskHint(item)}>
                       💡 提示
                     </button>
@@ -273,10 +400,11 @@ export default function DashboardApp() {
                 <span>复习健康度</span>
                 <span>{(stats?.total > 0 ? (stats.mastered / stats.total * 100).toFixed(1) : 0)}%</span>
               </div>
-              <div style={{ height: 6, background: 'var(--bg-secondary)', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{ width: `${stats?.total > 0 ? (stats.mastered / stats.total * 100) : 0}%`, height: '100%', background: 'var(--gradient-hero)' }} />
+              <div style={{ height: 6, background: '#000', border: '1px solid #333', overflow: 'hidden' }}>
+                <div style={{ width: `${stats?.total > 0 ? (stats.mastered / stats.total * 100) : 0}%`, height: '100%', background: '#ffaa00' }} />
               </div>
             </div>
+            {renderHeatmap()}
           </div>
 
         </div>
@@ -315,10 +443,62 @@ export default function DashboardApp() {
               />
             </div>
 
+            <div className="form-group">
+              <label className="form-label">每日最大复习数量 (防止堆积)</label>
+              <input 
+                type="number" 
+                className="input-field" 
+                min="1" max="200"
+                value={settings.maxDailyReview || 20}
+                onChange={e => setSettings({...settings, maxDailyReview: parseInt(e.target.value, 10)})}
+              />
+              <p className="form-hint">如果积压太多题目，系统会每天只放出这些题目供你复习。</p>
+            </div>
+
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 32 }}>
               <button className="btn btn-secondary" onClick={() => setShowSettings(false)}>取消</button>
               <button className="btn btn-primary" onClick={saveSettings}>保存设置</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Code Diagnose Modal */}
+      {showDiagnose && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget && !diagnosing) setShowDiagnose(false); }}>
+          <div className="modal-content" style={{ width: 700 }}>
+            <div className="modal-header">
+              <h2 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>💻 代码诊断</span>
+                <span className="badge badge-medium" style={{ fontSize: 12 }}>#{diagnoseProblem?.id}</span>
+              </h2>
+              {!diagnosing && <button className="close-btn" onClick={() => setShowDiagnose(false)}>×</button>}
+            </div>
+            
+            <div className="form-group" style={{ height: '100%' }}>
+              <label className="form-label" style={{ color: '#fff' }}>粘贴你的代码进行复杂度评估：</label>
+              <textarea 
+                className="input-field" 
+                style={{ height: 180, resize: 'vertical', fontFamily: 'monospace', fontSize: 13, background: '#1e1e1e', color: '#d4d4d4' }}
+                placeholder="// 在此粘贴你的解答..."
+                value={diagnoseCode}
+                onChange={e => setDiagnoseCode(e.target.value)}
+                disabled={diagnosing}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn btn-primary" onClick={submitDiagnosis} disabled={diagnosing || !diagnoseCode.trim()}>
+                {diagnosing ? '深度分析中...' : '提交诊断'}
+              </button>
+            </div>
+
+            {diagnoseResult && (
+              <div style={{ marginTop: 24, padding: 16, background: 'rgba(0,0,0,0.6)', border: '2px solid #55ff55', color: '#55ff55', fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                <strong>诊断报告：</strong><br/><br/>
+                {diagnoseResult}
+              </div>
+            )}
           </div>
         </div>
       )}

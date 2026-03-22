@@ -71,6 +71,21 @@ function handleMockMessage(msg) {
         case 'GET_REVIEW_DATA':
           resolve(mockReviewData);
           break;
+        case 'GET_ACTIVITY_LOG': {
+          const mockLog = {};
+          const today = new Date();
+          for(let i=0; i<60; i++) {
+             const d = new Date(today);
+             d.setDate(d.getDate() - i);
+             const ds = d.toISOString().split('T')[0];
+             mockLog[ds] = Math.floor(Math.random() * 5); // 0-4 reviews randomly
+          }
+          resolve(mockLog);
+          break;
+        }
+        case 'DIAGNOSE_CODE':
+          resolve({ diagnosis: '1. 时间复杂度：O(N)\\n2. 空间复杂度：O(1)\\n3. 优化建议：代码已经很不错了，这里可以用双指针进一步优化冗余循环。' });
+          break;
         default:
           resolve({ error: 'Unknown' });
       }

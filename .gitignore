@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+test-*.js
+scrape-*.js
+introspect-*.js
+extract-*.js
+search-*.js
+debug-*.js
+test-result.txt
+test-ssr.json
+.DS_Store
+.idea/
+.vscode/

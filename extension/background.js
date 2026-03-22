@@ -4,8 +4,8 @@
  */
 
 import { createReviewEntry, updateReviewEntry, getTodayReviewList, getReviewStats } from './ebbinghaus.js';
-import { getReviewData, setReviewData, getSettings, setSettings, getSyncLog, updateSyncLog } from './storage.js';
-import { generateDailySummary, generateHint } from './deepseek-api.js';
+import { getReviewData, setReviewData, getSettings, setSettings, getSyncLog, updateSyncLog, getActivityLog, updateActivityLog } from './storage.js';
+import { generateDailySummary, generateHint, diagnoseCode } from './deepseek-api.js';
 
 // ─── 初始化定时器 ───
 chrome.runtime.onInstalled.addListener(() => {
@@ -32,7 +32,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 // ─── 使用 chrome.scripting.executeScript 在 leetcode.cn 页面上下文中执行 fetch ───
-async function proxyLeetCodeAPI(query, variables) {
+async function proxyLeetCodeAPI(query, variables, endpoint = '/graphql/') {
   let tabs = await chrome.tabs.query({ url: 'https://leetcode.cn/*' });
   let tabId;
   let autoOpened = false;
@@ -60,10 +60,10 @@ async function proxyLeetCodeAPI(query, variables) {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: async (gqlQuery, gqlVariables) => {
+      func: async (gqlQuery, gqlVariables, gqlEndpoint) => {
         try {
           const csrftoken = document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1] || '';
-          const resp = await fetch('https://leetcode.cn/graphql/', {
+          const resp = await fetch(`https://leetcode.cn${gqlEndpoint}`, {
             method: 'POST',
             credentials: 'include',
             headers: { 
@@ -81,7 +81,7 @@ async function proxyLeetCodeAPI(query, variables) {
           return { error: e.message };
         }
       },
-      args: [query, variables]
+      args: [query, variables, endpoint]
     });
 
     if (autoOpened) {
@@ -128,8 +128,10 @@ async function handleMessage(msg) {
     }
     case 'GENERATE_SUMMARY': return handleGenerateSummary();
     case 'GENERATE_HINT': return handleGenerateHint(msg.problem, msg.level);
+    case 'DIAGNOSE_CODE': return handleDiagnoseCode(msg.problem, msg.code);
     case 'CHECK_LOGIN': return handleCheckLogin();
     case 'GET_REVIEW_DATA': return getReviewData();
+    case 'GET_ACTIVITY_LOG': return fetchLeetCodeCalendar();
     default: return { error: 'Unknown message type' };
   }
 }
@@ -217,10 +219,25 @@ async function handleSyncAll() {
     const reviewData = await getReviewData();
     let newCount = 0;
 
-    for (const p of allProblems) {
+    for (let i = 0; i < allProblems.length; i++) {
+      const p = allProblems[i];
       const fid = p.questionFrontendId;
       if (!reviewData[fid]) {
-        reviewData[fid] = createReviewEntry(p, Date.now());
+        // 交错排程：前 10 题立刻复习，之后每 10 题推迟 1 天
+        const staggerDays = Math.floor(i / 10);
+        const startTime = Date.now() - (86400000 * 1); // 伪造 1 天前完成，配合 1 天间隔即立刻到期
+        // 但为了简单，我们直接手动设置 nextReview
+        const entry = createReviewEntry(p, startTime);
+        
+        if (i < 10) {
+          // 前 10 个直接今天就能看到
+          entry.nextReview = Date.now();
+        } else {
+          // 其余的按批次往后排，每天 10 个
+          entry.nextReview = Date.now() + staggerDays * 86400000;
+        }
+        
+        reviewData[fid] = entry;
         newCount++;
       }
     }
@@ -236,8 +253,10 @@ async function handleSyncAll() {
 }
 
 async function handleGetToday() {
+  const settings = await getSettings();
+  const limit = settings.maxDailyReview || 20;
   const reviewData = await getReviewData();
-  const todayReview = getTodayReviewList(reviewData);
+  const todayReview = getTodayReviewList(reviewData, limit);
   const stats = getReviewStats(reviewData);
   return { todayReview, stats };
 }
@@ -248,6 +267,7 @@ async function handleMarkReview(problemId, mastery) {
   if (!entry) return { error: 'Problem not found in review data' };
   reviewData[problemId] = updateReviewEntry(entry, mastery);
   await setReviewData(reviewData);
+  await updateActivityLog(1); // 增加每日热力图活跃度
   return { success: true, entry: reviewData[problemId] };
 }
 
@@ -257,6 +277,7 @@ async function handleAddProblem(problem) {
   if (!reviewData[fid]) {
     reviewData[fid] = createReviewEntry(problem, Date.now());
     await setReviewData(reviewData);
+    await updateActivityLog(1); // 添加新题也增加一次活跃度
     return { success: true, isNew: true };
   }
   return { success: true, isNew: false };
@@ -310,6 +331,13 @@ async function handleGenerateHint(problem, level) {
   return { hint };
 }
 
+async function handleDiagnoseCode(problem, code) {
+  const settings = await getSettings();
+  if (!settings.deepseekApiKey) return { error: '请先配置 API Key' };
+  const diagnosis = await diagnoseCode(settings.deepseekApiKey, problem, code);
+  return { diagnosis };
+}
+
 async function handleCheckLogin() {
   try {
     const data = await proxyLeetCodeAPI(USER_PROFILE_QUERY, {});
@@ -317,5 +345,72 @@ async function handleCheckLogin() {
     return { isLoggedIn: !!us?.isSignedIn, username: us?.username };
   } catch {
     return { isLoggedIn: false };
+  }
+}
+
+/**
+ * 获取真实的 LeetCode 提交热力图数据
+ */
+async function fetchLeetCodeCalendar() {
+  const loginData = await handleCheckLogin();
+  if (!loginData.isLoggedIn || !loginData.username) {
+    const loc = await getActivityLog(); 
+    return { ...loc, debugError: 'Not logged in to LeetCode or username missing' };
+  }
+
+  try {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth() + 1;
+    
+    // Testing multiple strategies to find which one returns data
+    const queryV2 = `query ($y: Int!, $m: Int!) {
+      userProgressCalendarV2(year: $y, month: $m, queryType: SUBMISSION) {
+        dateSubmissionNumWithinMonth { date numSubmitted }
+      }
+    }`;
+    const queryAnnual = `query { getAnnualInfo }`;
+    
+    let bestData = null;
+    let strategy = '';
+    
+    // 1. Try V2 current month
+    const resV2 = await proxyLeetCodeAPI(queryV2, { y, m }, '/graphql/');
+    const days = resV2?.data?.userProgressCalendarV2?.dateSubmissionNumWithinMonth || [];
+    if (days.length > 0) {
+      bestData = days;
+      strategy = 'V2-M' + m;
+    }
+    
+    // 2. If V2 failed or only one month, try getAnnualInfo
+    if (!bestData) {
+      const resAnnual = await proxyLeetCodeAPI(queryAnnual, {}, '/graphql/');
+      if (resAnnual?.data?.getAnnualInfo) {
+        strategy = 'Annual';
+        // Need to parse Annual info if it's a string
+      }
+    }
+
+    const log = {};
+    let debugInfo = `Strat: ${strategy}. Raw: ${JSON.stringify(resV2).substring(0,60)}`;
+    
+    if (bestData) {
+      for (const day of bestData) {
+        // userProgressCalendarV2 returns "2026-03-01" or "2026/03/01"
+        const ds = String(day.date).replace(/\//g, '-');
+        log[ds] = (log[ds] || 0) + day.numSubmitted;
+      }
+      debugInfo = `Success with ${strategy}. Got ${bestData.length} days.`;
+    }
+
+    const loc = await getActivityLog();
+    const merged = Object.assign({}, loc, log);
+    merged.debugInfo = debugInfo;
+    return merged;
+    
+  } catch (e) {
+    console.error('Failed to fetch LeetCode Calendar:', e);
+    const loc = await getActivityLog();
+    return { ...loc, debugError: 'API Exception: ' + e.message };
   }
 }
