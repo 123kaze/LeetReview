@@ -1,4 +1,12 @@
 {
+  "name": "leetreview-root",
+  "version": "1.0.0",
+  "description": "LeetReview Extension Root",
+  "main": "index.js",
+  "scripts": {
+    "install-all": "npm install && cd extension/ui && npm install",
+    "build": "cd extension/ui && npm run build"
+  },
   "dependencies": {
     "leetcode-query": "^2.0.1",
     "puppeteer": "^24.40.0"
